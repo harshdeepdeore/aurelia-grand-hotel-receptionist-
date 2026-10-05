@@ -41,3 +41,30 @@ The code currently uses turn-based STT with ElevenLabs Scribe v2, then streams E
 ## Production note
 
 Do not claim a booking, payment, reservation change, message delivery, or database lookup unless a real integration/tool has been added and completed the action.
+
+## Local setup and smoke test
+
+Create a local environment file:
+
+cp .env.example .env
+
+Then set the real values for ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, OPENAI_API_KEY, and the model settings shown in .env.example.
+
+Do not commit .env.
+
+Install and run the provider smoke test:
+
+pip install -r requirements.txt
+python smoke_test.py
+
+The smoke test checks ElevenLabs voice access, generates a very short PCM sample, and checks the OpenAI LLM connection. It does not place a phone call.
+
+Then start the bridge:
+
+python exotel_bridge.py
+
+For a real Exotel test, the bridge must be reachable over a public secure WebSocket URL (wss://...).
+
+## Current ElevenLabs choices
+
+The bridge uses Scribe v2 for completed-turn transcription and Flash v2.5 for low-latency multilingual TTS. ElevenLabs currently documents Scribe v2 for batch transcription and Flash v2.5 for low-latency conversational TTS; raw PCM 16 kHz is supported for audio pipelines.
