@@ -1,0 +1,33 @@
+AURELIA GRAND HOTEL — KNOWLEDGE BASE
+Pune, Maharashtra, India
+
+IMPORTANT:
+Replace this file with the approved hotel knowledge base before production use.
+Do not add guessed information. Every factual hotel answer should come from verified hotel information.
+
+Suggested sections to fill:
+- Hotel overview
+- Address and landmark
+- Check-in and check-out
+- Room categories
+- Room amenities
+- Room occupancy
+- Rates and taxes
+- Breakfast timing and location
+- Restaurants / dining
+- Room service
+- Wi-Fi
+- Parking / valet
+- Pool / gym / spa / business facilities
+- Accessibility
+- Pet policy
+- Child policy
+- Cancellation policy
+- Early check-in / late check-out
+- Airport / railway transfer policy
+- Nearby attractions
+- Contact numbers
+- Human reception / escalation details
+- Booking process and information required for a booking enquiry
+
+Do not paste private payment credentials, API keys, passwords, OTPs, or guest financial information into this file.
