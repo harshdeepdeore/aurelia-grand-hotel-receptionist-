@@ -614,6 +614,7 @@ async def main():
         ping_interval=20,
         ping_timeout=20,
         max_size=2**20,
+        logger=WEBSOCKET_LOGGER,
     ):
         log(f"✅ Aurelia Grand Hotel Exotel bridge listening on port {PORT}")
         log(f"🤖 LLM: {OPENAI_MODEL}")
