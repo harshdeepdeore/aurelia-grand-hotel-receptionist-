@@ -5,19 +5,41 @@ import io
 import json
 import os
 import http
+import logging
 import re
+import sys
 import time
 import wave
 from typing import List, Optional, Tuple
 
 import requests
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
 from dotenv import load_dotenv
 from openai import OpenAI
 
 from prompt import SYSTEM_PROMPT
 
 load_dotenv()
+
+# ============================================================
+# RENDER LOGGING
+# ============================================================
+# Render captures stdout/stderr. Force line-buffered output so
+# every call-stage message appears immediately in Application Logs.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
+
+def log(*args):
+    log(*args, flush=True)
+
+# Keep routine websocket probe failures (Render HEAD checks) out of
+# the application logs. Real Exotel/WebSocket lifecycle messages below
+# are still logged by our own handler.
+WEBSOCKET_LOGGER = logging.getLogger("aurelia.websocket")
+WEBSOCKET_LOGGER.setLevel(logging.CRITICAL)
 
 # ============================================================
 # ENVIRONMENT
@@ -134,7 +156,7 @@ def elevenlabs_stt(pcm16_bytes: bytes, exotel_sample_rate: int) -> str:
     )
 
     if response.status_code != 200:
-        print("❌ ElevenLabs STT error:", response.status_code, response.text)
+        log("❌ ElevenLabs STT error:", response.status_code, response.text)
 
     response.raise_for_status()
     data = response.json()
@@ -143,7 +165,7 @@ def elevenlabs_stt(pcm16_bytes: bytes, exotel_sample_rate: int) -> str:
 
     # Prevent obvious unsupported-script garbage from reaching the LLM.
     if transcript and not ALLOWED_SCRIPT_RE.match(transcript):
-        print("⚠️ Discarding unexpected transcript:", transcript)
+        log("⚠️ Discarding unexpected transcript:", transcript)
         return ""
 
     return transcript
@@ -226,7 +248,7 @@ def tts_stream_producer(
         )
 
         if response.status_code != 200:
-            print("❌ ElevenLabs TTS error:", response.status_code, response.text)
+            log("❌ ElevenLabs TTS error:", response.status_code, response.text)
             return
 
         for source_chunk in response.iter_content(chunk_size=4096):
@@ -262,7 +284,7 @@ def tts_stream_producer(
             loop.call_soon_threadsafe(queue.put_nowait, final_chunk)
 
     except Exception as exc:
-        print("❌ ElevenLabs TTS exception:", exc)
+        log("❌ ElevenLabs TTS exception:", exc)
     finally:
         loop.call_soon_threadsafe(queue.put_nowait, None)
 
@@ -325,7 +347,7 @@ async def stream_tts_and_send(
             )
 
             if not first_audio_logged:
-                print(f"🔊 First {label} audio byte: {time.time() - started:.2f}s")
+                log(f"🔊 First {label} audio byte: {time.time() - started:.2f}s")
                 first_audio_logged = True
 
             await asyncio.sleep(len(chunk) / (exotel_sample_rate * 2))
@@ -336,15 +358,15 @@ async def stream_tts_and_send(
                 except asyncio.QueueEmpty:
                     break
 
-        print(f"🔊 {label} finished speaking in {time.time() - started:.2f}s")
+        log(f"🔊 {label} finished speaking in {time.time() - started:.2f}s")
 
     except asyncio.CancelledError:
-        print(f"✋ {label} speech interrupted")
+        log(f"✋ {label} speech interrupted")
         raise
-    except websockets.exceptions.ConnectionClosed:
-        print("⚠️ Caller disconnected during TTS")
+    except ConnectionClosed:
+        log("⚠️ Caller disconnected during TTS")
     except Exception as exc:
-        print("❌ TTS playback exception:", exc)
+        log("❌ TTS playback exception:", exc)
 
 # ============================================================
 # ONE CALLER TURN
@@ -364,7 +386,7 @@ async def process_turn(
         user_audio,
         exotel_sample_rate,
     )
-    print(f"🗣️ Caller: {transcript} | STT {time.time() - stt_start:.2f}s")
+    log(f"🗣️ Caller: {transcript} | STT {time.time() - stt_start:.2f}s")
 
     if not transcript:
         return None
@@ -379,7 +401,7 @@ async def process_turn(
     history.append({"role": "user", "content": transcript})
     history.append({"role": "assistant", "content": raw_reply})
 
-    print(f"🤖 Arjun [{language_code}]: {reply_text} | LLM {time.time() - llm_start:.2f}s")
+    log(f"🤖 Arjun [{language_code}]: {reply_text} | LLM {time.time() - llm_start:.2f}s")
     return reply_text, language_code
 
 # ============================================================
@@ -387,7 +409,7 @@ async def process_turn(
 # ============================================================
 
 async def handle_call(ws):
-    print("🔌 New Exotel connection")
+    log("🔌 New Exotel connection")
 
     stream_sid: Optional[str] = None
     exotel_sample_rate = DEFAULT_EXOTEL_SAMPLE_RATE
@@ -408,7 +430,7 @@ async def handle_call(ws):
                 return
             reply_text, language_code = result
             if tts_task is not None and not tts_task.done():
-                print("⚠️ Existing TTS still active; skipping overlap")
+                log("⚠️ Existing TTS still active; skipping overlap")
                 return
             tts_task = asyncio.create_task(
                 stream_tts_and_send(
@@ -422,7 +444,7 @@ async def handle_call(ws):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print("❌ Turn processing error:", exc)
+            log("❌ Turn processing error:", exc)
 
     def start_turn():
         nonlocal turn_task, speaking, silence_count, speaking_started_at
@@ -436,12 +458,12 @@ async def handle_call(ws):
             return
 
         if len(audio_buffer) > MAX_BUFFER_BYTES:
-            print("⚠️ Caller buffer exceeded limit; clearing")
+            log("⚠️ Caller buffer exceeded limit; clearing")
             audio_buffer.clear()
             return
 
         if turn_task is not None and not turn_task.done():
-            print("⚠️ Previous turn still processing; dropping overlapping turn")
+            log("⚠️ Previous turn still processing; dropping overlapping turn")
             audio_buffer.clear()
             return
 
@@ -466,7 +488,7 @@ async def handle_call(ws):
                 except (TypeError, ValueError):
                     exotel_sample_rate = DEFAULT_EXOTEL_SAMPLE_RATE
 
-                print(
+                log(
                     "▶️ Stream started | "
                     f"sid={stream_sid} | "
                     f"sample_rate={exotel_sample_rate} | "
@@ -498,7 +520,7 @@ async def handle_call(ws):
                     if rms > BARGE_IN_RMS_THRESHOLD:
                         barge_in_count += 1
                         if barge_in_count >= BARGE_IN_FRAMES_TO_TRIGGER:
-                            print("✋ Barge-in detected — cancelling TTS")
+                            log("✋ Barge-in detected — cancelling TTS")
                             tts_task.cancel()
                             tts_task = None
                             barge_in_count = 0
@@ -533,26 +555,26 @@ async def handle_call(ws):
                     and speaking_started_at is not None
                     and time.time() - speaking_started_at > MAX_CONTINUOUS_SPEAKING_SECONDS
                 ):
-                    print("⏱️ Forcing caller turn end")
+                    log("⏱️ Forcing caller turn end")
                     start_turn()
                 continue
 
             if event == "dtmf":
-                print("DTMF:", message.get("dtmf"))
+                log("DTMF:", message.get("dtmf"))
                 continue
 
             if event == "stop":
-                print("⏹️ Call ended")
+                log("⏹️ Call ended")
                 break
 
     except (
-        websockets.exceptions.ConnectionClosed,
+        ConnectionClosed,
         BrokenPipeError,
         ConnectionResetError,
     ) as exc:
-        print("⚠️ Connection dropped:", exc)
+        log("⚠️ Connection dropped:", exc)
     except Exception as exc:
-        print("❌ Call handler error:", exc)
+        log("❌ Call handler error:", exc)
     finally:
         if tts_task is not None and not tts_task.done():
             tts_task.cancel()
@@ -593,10 +615,10 @@ async def main():
         ping_timeout=20,
         max_size=2**20,
     ):
-        print(f"✅ Aurelia Grand Hotel Exotel bridge listening on port {PORT}")
-        print(f"🤖 LLM: {OPENAI_MODEL}")
-        print(f"📝 ElevenLabs STT: {ELEVENLABS_STT_MODEL}")
-        print(f"🔊 ElevenLabs TTS: {ELEVENLABS_TTS_MODEL} / {ELEVENLABS_TTS_OUTPUT_FORMAT}")
+        log(f"✅ Aurelia Grand Hotel Exotel bridge listening on port {PORT}")
+        log(f"🤖 LLM: {OPENAI_MODEL}")
+        log(f"📝 ElevenLabs STT: {ELEVENLABS_STT_MODEL}")
+        log(f"🔊 ElevenLabs TTS: {ELEVENLABS_TTS_MODEL} / {ELEVENLABS_TTS_OUTPUT_FORMAT}")
         await asyncio.Future()
 
 
