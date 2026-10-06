@@ -8,12 +8,12 @@ from openai import OpenAI
 
 load_dotenv()
 
-ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
-ELEVENLABS_VOICE_ID = os.getenv('ELEVENLABS_VOICE_ID')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4.1-mini')
-TTS_MODEL = os.getenv('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5')
-OUTPUT_FORMAT = os.getenv('ELEVENLABS_TTS_OUTPUT_FORMAT', 'pcm_16000')
+ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '').strip()
+ELEVENLABS_VOICE_ID = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '').strip()
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4.1-mini').strip()
+TTS_MODEL = os.getenv('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5').strip()
+OUTPUT_FORMAT = os.getenv('ELEVENLABS_TTS_OUTPUT_FORMAT', 'pcm_16000').strip()
 
 missing = []
 for name, value in (
@@ -31,22 +31,17 @@ if missing:
 
 print('✅ Environment variables loaded')
 
-voices = requests.get(
-    'https://api.elevenlabs.io/v1/voices',
-    headers={'xi-api-key': ELEVENLABS_API_KEY},
-    timeout=15,
-)
-voices.raise_for_status()
-voice_ids = {v.get('voice_id') for v in voices.json().get('voices', [])}
-if ELEVENLABS_VOICE_ID not in voice_ids:
-    print('⚠️ Voice ID is not present in the voices returned by the API.')
-else:
-    print('✅ ElevenLabs voice access OK')
-
-tts = requests.post(
+# Test the exact endpoint our bridge uses.
+tts_url = (
     f'https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream'
-    f'?output_format={OUTPUT_FORMAT}',
-    headers={'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json'},
+    f'?output_format={OUTPUT_FORMAT}'
+)
+tts = requests.post(
+    tts_url,
+    headers={
+        'xi-api-key': ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+    },
     json={
         'text': 'Namaste. Aurelia Grand Hotel mein aapka swagat hai.',
         'model_id': TTS_MODEL,
@@ -60,18 +55,32 @@ tts = requests.post(
     },
     timeout=30,
 )
-tts.raise_for_status()
+
+if tts.status_code != 200:
+    print(f'❌ ElevenLabs TTS error: HTTP {tts.status_code}')
+    print(tts.text)
+    if tts.status_code == 401:
+        print('Hint: check that the key is valid, unexpired, and copied without extra quotes/spaces.')
+    if tts.status_code == 403:
+        print('Hint: edit the API key and make sure Text to Speech has Access.')
+    sys.exit(1)
+
 audio_path = Path('smoke_test_tts.pcm')
 audio_path.write_bytes(tts.content)
 print(f'✅ ElevenLabs TTS OK — wrote {len(tts.content):,} bytes to {audio_path}')
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-result = client.chat.completions.create(
-    model=OPENAI_MODEL,
-    temperature=0,
-    max_tokens=20,
-    messages=[{'role': 'user', 'content': 'Reply with exactly: Aurelia test OK'}],
-)
+try:
+    result = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        temperature=0,
+        max_tokens=20,
+        messages=[{'role': 'user', 'content': 'Reply with exactly: Aurelia test OK'}],
+    )
+except Exception as exc:
+    print('❌ OpenAI LLM error:', exc)
+    sys.exit(1)
+
 reply = (result.choices[0].message.content or '').strip()
 print(f'✅ OpenAI LLM OK — response: {reply}')
 
