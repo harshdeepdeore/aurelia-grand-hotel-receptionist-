@@ -4,13 +4,14 @@ import base64
 import io
 import json
 import os
+import http
 import re
 import time
 import wave
 from typing import List, Optional, Tuple
 
 import requests
-import websockets
+from websockets.asyncio.server import serve
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -559,14 +560,35 @@ async def handle_call(ws):
             turn_task.cancel()
 
 # ============================================================
+# HTTP HEALTH CHECK
+# ============================================================
+
+def health_check(connection, request):
+    """
+    Render and other infrastructure may send normal HTTP HEAD/GET
+    probes to the web service. Keep those requests away from the
+    WebSocket handler while allowing real WebSocket upgrades through.
+    """
+    upgrade = request.headers.get("Upgrade", "").lower()
+    if upgrade != "websocket":
+        return connection.respond(
+            http.HTTPStatus.OK,
+            "Aurelia Grand Hotel voice bridge is live.\\n",
+        )
+    return None
+
+
+# ============================================================
 # SERVER
 # ============================================================
 
+
 async def main():
-    async with websockets.serve(
+    async with serve(
         handle_call,
         "0.0.0.0",
         PORT,
+        process_request=health_check,
         ping_interval=20,
         ping_timeout=20,
         max_size=2**20,
