@@ -1,1 +1,1 @@
-web: python exotel_bridge.py
+web: python -u exotel_bridge.py
