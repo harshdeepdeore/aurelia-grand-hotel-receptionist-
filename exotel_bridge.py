@@ -88,6 +88,11 @@ REBUFFER_MS = 300
 
 # Supported reply tags
 SUPPORTED_TTS_LANGUAGES = {"hi-IN", "en-IN", "mr-IN"}
+ELEVENLABS_LANGUAGE_CODES = {
+    "hi-IN": "hi",
+    "en-IN": "en",
+    "mr-IN": "mr",
+}
 LANGUAGE_TAG_RE = re.compile(r"^\[(hi-IN|en-IN|mr-IN)\]\s*", re.IGNORECASE)
 
 ALLOWED_SCRIPT_RE = re.compile(r"^[\u0900-\u097F\u0020-\u007E\s]*$")
@@ -210,6 +215,7 @@ def ask_llm(history: List[dict], user_text: str) -> Tuple[str, str, str]:
 
 def tts_stream_producer(
     text: str,
+    language_code: str,
     exotel_sample_rate: int,
     loop: asyncio.AbstractEventLoop,
     queue: asyncio.Queue,
@@ -235,12 +241,14 @@ def tts_stream_producer(
             json={
                 "text": text,
                 "model_id": ELEVENLABS_TTS_MODEL,
+                "language_code": ELEVENLABS_LANGUAGE_CODES.get(language_code),
                 "voice_settings": {
-                    "stability": 0.48,
-                    "similarity_boost": 0.82,
-                    "style": 0.18,
+                    # Keep the delivery natural and consistent for phone calls.
+                    "stability": 0.55,
+                    "similarity_boost": 0.80,
+                    "style": 0.0,
                     "use_speaker_boost": True,
-                    "speed": 1.05,
+                    "speed": 1.0,
                 },
             },
             stream=True,
@@ -293,6 +301,7 @@ async def stream_tts_and_send(
     ws,
     stream_sid: str,
     text: str,
+    language_code: str,
     exotel_sample_rate: int,
     label: str = "Arjun",
 ):
@@ -308,6 +317,7 @@ async def stream_tts_and_send(
         None,
         tts_stream_producer,
         text,
+        language_code,
         exotel_sample_rate,
         loop,
         queue,
@@ -380,6 +390,7 @@ async def process_turn(
     if not user_audio:
         return None
 
+    log(f"🎙️ Processing caller turn | {len(user_audio)} audio bytes")
     stt_start = time.time()
     transcript = await asyncio.to_thread(
         elevenlabs_stt,
@@ -391,6 +402,7 @@ async def process_turn(
     if not transcript:
         return None
 
+    log("🧠 Sending caller transcript to LLM...")
     llm_start = time.time()
     reply_text, language_code, raw_reply = await asyncio.to_thread(
         ask_llm,
@@ -437,6 +449,7 @@ async def handle_call(ws):
                     ws,
                     stream_sid,
                     reply_text,
+                    language_code,
                     exotel_sample_rate,
                     label="Arjun",
                 )
@@ -505,6 +518,7 @@ async def handle_call(ws):
                         ws,
                         stream_sid,
                         GREETING_TEXT,
+                        GREETING_LANGUAGE,
                         exotel_sample_rate,
                         label="Greeting",
                     )
