@@ -33,7 +33,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(line_buffering=True)
 
 def log(*args):
-    log(*args, flush=True)
+    print(*args, flush=True)
 
 # Keep routine websocket probe failures (Render HEAD checks) out of
 # the application logs. Real Exotel/WebSocket lifecycle messages below
